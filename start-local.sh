@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/bin/sh
 # --------------------------------------------------------
-# Run Elasticsearch and Kibana for local testing
+# Run Elasticsearch, Kibana and Fleet Agent for local testing
 # Note: do not use this script in a production environment
 # --------------------------------------------------------
 #
@@ -12,7 +12,7 @@
 # not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#	http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
@@ -21,8 +21,6 @@
 # specific language governing permissions and limitations
 # under the License.
 set -eu
-
-fleet_enabled=false
 
 parse_args() {
   # Parse the script parameters
@@ -42,9 +40,9 @@ parse_args() {
         esonly=true
         shift
         ;;
-
-      -fleet)
-        fleet_enabled=true
+        
+      -withfleet)
+        withfleet=true
         shift
         ;;
 
@@ -70,43 +68,45 @@ parse_args() {
 
 startup() {
   echo
-  echo '  ______ _          _  _      '
-  echo ' |  ____| |        | | (_)     '
+  echo '  ______ _           _   _      '
+  echo ' |  ____| |         | | (_)     '
   echo ' | |__  | | __ _ ___| |_ _  ___ '
   echo ' |  __| | |/ _` / __| __| |/ __|'
   echo ' | |____| | (_| \__ \ |_| | (__ '
   echo ' |______|_|\__,_|___/\__|_|\___|'
   echo '-------------------------------------------------'
   echo '🚀 Run Elasticsearch and Kibana for local testing'
-  if [ "<span class="math-inline">fleet\_enabled" \= true \]; then
-echo '\+ Fleet Server'
-fi
-echo '\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-'
-echo
-echo 'ℹ️  Do not use this script in a production environment'
-echo
-\# Version
-version\="0\.8\.1"
-\# Folder name for the installation
-installation\_folder\="elastic\-start\-local"
-\# API key name for Elasticsearch
-api\_key\_name\="elastic\-start\-local"
-\# Name of the error log
-error\_log\="error\-start\-local\.log"
-\# Minimum version for docker\-compose
-min\_docker\_compose\="1\.29\.0"
-\# Elasticsearch container name
-elasticsearch\_container\_name\="es\-local\-dev"
-\# Kibana container name
-kibana\_container\_name\="kibana\-local\-dev"
-\# Fleet Server container name
-fleet\_server\_container\_name\="fleet\-server\-local"
-\# Minimum disk space required for docker images \+ services \(in GB\)
-min\_disk\_space\_required\=5
-\}
-\# Check for ARM64 architecture
-is\_arm64\(\) \{
-arch\="</span>(uname -m)"
+  echo '-------------------------------------------------'
+  echo 
+  echo 'ℹ️  Do not use this script in a production environment'
+  echo
+
+  # Version
+  version="0.9.0"
+
+  # Folder name for the installation
+  installation_folder="elastic-start-local"
+  # API key name for Elasticsearch
+  api_key_name="elastic-start-local"
+  # Name of the error log
+  error_log="error-start-local.log"
+  # Minimum version for docker-compose
+  min_docker_compose="1.29.0"
+  # Elasticsearch container name
+  elasticsearch_container_name="es-local-dev"
+  # Kibana container name
+  kibana_container_name="kibana-local-dev"
+  # Fleet container name
+  fleet_agent_container_name="fleet-agent-local-dev"
+  # Fleet server name (when used)
+  fleet_server_container_name="fleet-server-local-dev"
+  # Minimum disk space required for docker images + services (in GB)
+  min_disk_space_required=5
+}
+
+# Check for ARM64 architecture
+is_arm64() {
+  arch="$(uname -m)"
   if [ "$arch" = "arm64" ] || [ "$arch" = "aarch64" ]; then
     return 0 # Return 0 (true)
   else
@@ -124,17 +124,17 @@ version_sort() {
 
 # Function to check if the format is a valid semantic version (major.minor.patch)
 is_valid_version() {
-  echo "<span class="math-inline">1" \| grep \-E \-q '^\[0\-9\]\+\\\.\[0\-9\]\+\\\.\[0\-9\]\+</span>'
+  echo "$1" | grep -E -q '^[0-9]+\.[0-9]+\.[0-9]+$'
 }
 
 # Get the latest stable version of Elasticsearch
 # Note: It removes all the beta or candidate releases from the list
 # but includes the GA releases (e.g. new major)
 get_latest_version() {
-  versions="<span class="math-inline">\(curl \-s "https\://artifacts\.elastic\.co/releases/stack\.json"\)"
-latest\_version\=</span>(echo "$versions" | awk -F'"' '/"version": *"/ {print <span class="math-inline">4\}' \| grep \-E '^\[0\-9\]\+\\\.\[0\-9\]\+\\\.\[0\-9\]\+\( GA\)?</span>' | version_sort | tail -n 1)
+  versions="$(curl -s "https://artifacts.elastic.co/releases/stack.json")"
+  latest_version=$(echo "$versions" | awk -F'"' '/"version": *"/ {print $4}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+( GA)?$' | version_sort | tail -n 1)
   # Remove the GA prefix from the version, if present
-  latest_version=$(echo "<span class="math-inline">latest\_version" \| awk '\{ gsub\(/ GA</span>/, "", $0); print }')
+  latest_version=$(echo "$latest_version" | awk '{ gsub(/ GA$/, "", $0); print }')
 
   # Check if the latest version is empty
   if [ -z "$latest_version" ]; then
@@ -147,25 +147,26 @@ latest\_version\=</span>(echo "$versions" | awk -F'"' '/"version": *"/ {print <s
     exit 1
   fi
 
-  echo "<span class="math-inline">latest\_version"
-\}
-\# Detect if running on LXC container
-detect\_lxc\(\) \{
-\# Check /proc/1/environ for LXC container identifier
-if grep \-qa "container\=lxc" /proc/1/environ 2\>/dev/null; then
-return 0
-fi
-\# Check /proc/self/cgroup for LXC references
-if grep \-q "lxc" /proc/self/cgroup 2\>/dev/null; then
-return 0
-fi
-\# Check for LXC in /sys/fs/cgroup
-if grep \-q "lxc" /sys/fs/cgroup/\* 2\>/dev/null; then
-return 0
-fi
-\# Use systemd\-detect\-virt if available
-if command \-v systemd\-detect\-virt \>/dev/null 2\>&1; then
-if \[ "</span>(systemd-detect-virt)" = "lxc" ]; then
+  echo "$latest_version"
+}
+
+# Detect if running on LXC container
+detect_lxc() {
+    # Check /proc/1/environ for LXC container identifier
+    if grep -qa "container=lxc" /proc/1/environ 2>/dev/null; then
+      return 0
+    fi
+    # Check /proc/self/cgroup for LXC references
+    if grep -q "lxc" /proc/self/cgroup 2>/dev/null; then
+      return 0
+    fi
+    # Check for LXC in /sys/fs/cgroup
+    if grep -q "lxc" /sys/fs/cgroup/* 2>/dev/null; then  
+      return 0
+    fi
+    # Use systemd-detect-virt if available
+    if command -v systemd-detect-virt >/dev/null 2>&1; then
+      if [ "$(systemd-detect-virt)" = "lxc" ]; then
         return 0
       fi
     fi
@@ -190,8 +191,8 @@ get_os_info() {
       echo "Version: $(cat /etc/debian_version)"
   elif [ -f /etc/redhat-release ]; then
       # For Red Hat-based distributions
-      echo "Distribution: <span class="math-inline">\(cat /etc/redhat\-release\)"
-elif \[ \-n "</span>{OSTYPE+x}" ]; then
+      echo "Distribution: $(cat /etc/redhat-release)"
+  elif [ -n "${OSTYPE+x}" ]; then
     if [ "${OSTYPE#darwin}" != "$OSTYPE" ]; then
         # macOS detection
         echo "Distribution: macOS"
@@ -226,10 +227,10 @@ cleanup() {
   if [ -d "./../$folder_to_clean" ]; then
     if [ -f "docker-compose.yml" ]; then
       $docker_clean >/dev/null 2>&1
-      <span class="math-inline">docker\_remove\_volumes \>/dev/null 2\>&1
-fi
-cd \.\.
-rm \-rf "</span>{folder_to_clean}"
+      $docker_remove_volumes >/dev/null 2>&1
+    fi
+    cd ..
+    rm -rf "${folder_to_clean}"
   fi
 }
 
@@ -241,20 +242,20 @@ generate_error_log() {
   docker_services="$2"
   error_file="$error_log"
   if [ -d "./../$folder_to_clean" ]; then
-    error_file="./../<span class="math-inline">error\_log"
-fi
-if \[ \-n "</span>{msg}" ]; then
+    error_file="./../$error_log"
+  fi
+  if [ -n "${msg}" ]; then
     echo "${msg}" > "$error_file"
   fi
-  {
+  { 
     echo "Start-local version: ${version}"
     echo "Docker engine: $(docker --version)"
     echo "Docker compose: ${docker_version}"
     get_os_info
-  } >> "$error_file"
+  } >> "$error_file" 
   for service in $docker_services; do
-    echo "-- Logs of service ${service}:" >> "<span class="math-inline">error\_file"
-docker logs "</span>{service}" >> "$error_file" 2> /dev/null
+    echo "-- Logs of service ${service}:" >> "$error_file"
+    docker logs "${service}" >> "$error_file" 2> /dev/null
   done
   echo "An error log has been generated in ${error_log} file."
   echo "If you need assistance, open an issue at https://github.com/elastic/start-local/issues"
@@ -270,10 +271,10 @@ compare_versions() {
   original_ifs="$IFS"
   IFS='.'
   # shellcheck disable=SC2086
-  set -- <span class="math-inline">v1; v1\_major\=</span>{1:-0}; v1_minor=<span class="math-inline">\{2\:\-0\}; v1\_patch\=</span>{3:-0}
+  set -- $v1; v1_major=${1:-0}; v1_minor=${2:-0}; v1_patch=${3:-0}
   IFS='.'
   # shellcheck disable=SC2086
-  set -- <span class="math-inline">v2; v2\_major\=</span>{1:-0}; v2_minor=<span class="math-inline">\{2\:\-0\}; v2\_patch\=</span>{3:-0}
+  set -- $v2; v2_major=${1:-0}; v2_minor=${2:-0}; v2_patch=${3:-0}
   IFS="$original_ifs"
 
   [ "$v1_major" -lt "$v2_major" ] && echo "lt" && return 0
@@ -282,37 +283,122 @@ compare_versions() {
   [ "$v1_minor" -lt "$v2_minor" ] && echo "lt" && return 0
   [ "$v1_minor" -gt "$v2_minor" ] && echo "gt" && return 0
 
-  [ "$v1_patch" -lt "$v1_patch" ] && echo "lt" && return 0
-  [ "$v1_patch" -gt "<span class="math-inline">v1\_patch" \] && echo "gt" && return 0
-echo "eq"
-\}
-\# Wait for availability of Kibana
-\# parameter\: timeout in seconds
-wait\_for\_kibana\(\) \{
-timeout\="</span>{1:-60}"
+  [ "$v1_patch" -lt "$v2_patch" ] && echo "lt" && return 0
+  [ "$v1_patch" -gt "$v2_patch" ] && echo "gt" && return 0
+
+  echo "eq"
+}
+
+# Wait for availability of Kibana
+# parameter: timeout in seconds
+wait_for_kibana() {
+  timeout="${1:-60}"
   echo "- Waiting for Kibana to be ready"
   echo
-  start_time="<span class="math-inline">\(date \+%s\)"
-until curl \-s \-I http\://localhost\:5601 \| grep \-q 'HTTP/1\.1 302 Found'; do
-elapsed\_time\="</span>(($(date +%s) - start_time))"
+  start_time="$(date +%s)"
+  until curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'; do
+    elapsed_time="$(($(date +%s) - start_time))"
     if [ "$elapsed_time" -ge "$timeout" ]; then
       error_msg="Error: Kibana timeout of ${timeout} sec"
       echo "$error_msg"
-      if [ "<span class="math-inline">fleet\_enabled" \= true \]; then
-generate\_error\_log "</span>{error_msg}" "${elasticsearch_container_name} ${kibana_container_name} <span class="math-inline">\{fleet\_server\_container\_name\} kibana\_settings"
-else
-generate\_error\_log "</span>{error_msg}" "${elasticsearch_container_name} <span class="math-inline">\{kibana\_container\_name\} kibana\_settings"
-fi
-cleanup
-exit 1
-fi
-sleep 2
-done
-\}
-\# Generates a random password with letters and numbers
-\# parameter\: size of the password \(default is 8 characters\)
-random\_password\(\) \{
-LENGTH\="</span>{1:-8}"
+      generate_error_log "${error_msg}" "${elasticsearch_container_name} ${kibana_container_name} kibana_settings"
+      cleanup
+      exit 1
+    fi
+    sleep 2
+  done
+}
+
+# Configure Fleet Server in Kibana
+# parameter: elastic password
+configure_fleet_server() {
+  es_password=$1
+  echo "- Configuring Fleet Server"
+  echo
+  
+  # Wait for Kibana to be fully ready
+  sleep 10
+  
+  # Login to Kibana to get a session cookie
+  cookies=$(curl -s -c - -X POST -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+    -d "{\"username\":\"elastic\",\"password\":\"${es_password}\"}" \
+    http://localhost:5601/api/security/v1/login | grep -o "sid=[^;]*")
+  
+  if [ -z "$cookies" ]; then
+    echo "Error: Could not authenticate with Kibana"
+    return 1
+  fi
+  
+  # Check if Fleet settings already exist
+  fleet_exists=$(curl -s -X GET -H "kbn-xsrf: true" -H "Cookie: $cookies" \
+    http://localhost:5601/api/fleet/settings | grep -c "\"isReady\":true")
+  
+  if [ "$fleet_exists" -eq 1 ]; then
+    echo "✅ Fleet is already configured"
+    return 0
+  fi
+  
+  # Set Fleet configuration
+  fleet_setup=$(curl -s -X POST -H "Content-Type: application/json" -H "kbn-xsrf: true" -H "Cookie: $cookies" \
+    -d "{\"fleet_server_hosts\":[\"http://fleet-server:8220\"]}" \
+    http://localhost:5601/api/fleet/setup)
+  
+  if echo "$fleet_setup" | grep -q '"isInitialized":true'; then
+    echo "✅ Fleet setup successful"
+  else
+    echo "Error: Fleet setup failed"
+    echo "$fleet_setup"
+    return 1
+  fi
+  
+  return 0
+}
+
+# Create a Fleet enrollment token for agents
+# parameter: elastic password
+create_fleet_token() {
+  es_password=$1
+  echo "- Creating Fleet enrollment token"
+  
+  # Login to Kibana to get a session cookie
+  cookies=$(curl -s -c - -X POST -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+    -d "{\"username\":\"elastic\",\"password\":\"${es_password}\"}" \
+    http://localhost:5601/api/security/v1/login | grep -o "sid=[^;]*")
+  
+  if [ -z "$cookies" ]; then
+    echo "Error: Could not authenticate with Kibana"
+    return ""
+  fi
+  
+  # Get default policy ID
+  policy_id=$(curl -s -X GET -H "kbn-xsrf: true" -H "Cookie: $cookies" \
+    http://localhost:5601/api/fleet/agent_policies | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+  
+  if [ -z "$policy_id" ]; then
+    echo "Error: Could not get default policy ID"
+    return ""
+  fi
+  
+  # Create enrollment token for the policy
+  token_response=$(curl -s -X POST -H "Content-Type: application/json" -H "kbn-xsrf: true" -H "Cookie: $cookies" \
+    -d "{\"policy_id\":\"$policy_id\"}" \
+    http://localhost:5601/api/fleet/enrollment-api-keys)
+  
+  token=$(echo "$token_response" | grep -o '"api_key":"[^"]*"' | cut -d'"' -f4)
+  
+  if [ -z "$token" ]; then
+    echo "Error: Could not create enrollment token"
+    return ""
+  fi
+  
+  echo "✅ Fleet enrollment token created"
+  echo "$token"
+}
+
+# Generates a random password with letters and numbers
+# parameter: size of the password (default is 8 characters)
+random_password() {
+  LENGTH="${1:-8}"
   LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "${LENGTH}"
 }
 
@@ -321,12 +407,12 @@ LENGTH\="</span>{1:-8}"
 # parameter 2: name of the API key to generate
 create_api_key() {
   es_password=$1
-  name=<span class="math-inline">2
-response\="</span>(curl -s -u "elastic:<span class="math-inline">\{es\_password\}" \-X POST http\://localhost\:9200/\_security/api\_key \-d "\{\\"name\\"\: \\"</span>{name}\"}" -H "Content-Type: application/json")"
-  if [ -z "<span class="math-inline">response" \]; then
-echo ""
-else
-api\_key\="</span>(echo "$response" | grep -Eo '"encoded":"[A-Za-z0-9+/=]+' | grep -Eo '[A-Za-z0-9+/=]+' | tail -n 1)"
+  name=$2
+  response="$(curl -s -u "elastic:${es_password}" -X POST http://localhost:9200/_security/api_key -d "{\"name\": \"${name}\"}" -H "Content-Type: application/json")"
+  if [ -z "$response" ]; then
+    echo ""
+  else
+    api_key="$(echo "$response" | grep -Eo '"encoded":"[A-Za-z0-9+/=]+' | grep -Eo '[A-Za-z0-9+/=]+' | tail -n 1)"
     echo "$api_key"
   fi
 }
@@ -334,9 +420,9 @@ api\_key\="</span>(echo "$response" | grep -Eo '"encoded":"[A-Za-z0-9+/=]+' | gr
 # Check if a container is runnning
 # parameter: the name of the container
 check_container_running() {
-  container_name=<span class="math-inline">1
-containers\="</span>(docker ps --format '{{.Names}}')"
-  if echo "<span class="math-inline">containers" \| grep \-q "^</span>{container_name}$"; then
+  container_name=$1
+  containers="$(docker ps --format '{{.Names}}')"
+  if echo "$containers" | grep -q "^${container_name}$"; then
     echo "The docker container '$container_name' is already running!"
     echo "You can have only one running at time."
     echo "To stop the container run the following command:"
@@ -349,8 +435,8 @@ containers\="</span>(docker ps --format '{{.Names}}')"
 # Check the available disk space in GB
 # parameter: required size in GB
 check_disk_space_gb() {
-  required=<span class="math-inline">1
-available\_gb\=</span>(($(df -k / | awk 'NR==2 {print $4}') / 1024 / 1024))
+  required=$1
+  available_gb=$(($(df -k / | awk 'NR==2 {print $4}') / 1024 / 1024))
   if [ "$available_gb" -lt "$required" ]; then
     echo "Error: only ${available_gb} GB of disk space available; ${required} GB required for the installation"
     exit 1
@@ -370,42 +456,36 @@ check_requirements() {
     echo "You can install it from https://www.gnu.org/software/grep/."
     exit 1
   fi
-  # Check for jq if fleet is enabled
-  if [ "<span class="math-inline">fleet\_enabled" \= true \] && \! available "jq"; then
-echo "Error\: jq command is required to setup Fleet Server"
-echo "You can install it from https\://stedolan\.github\.io/jq/download/"
-exit 1
-fi
-need\_wait\_for\_kibana\=true
-\# Check for "docker compose" or "docker\-compose"
-set \+e
-if \! docker compose \>/dev/null 2\>&1; then
-if \! available "docker\-compose"; then
-if \! available "docker"; then
-echo "Error\: docker command is required"
-echo "You can install it from https\://docs\.docker\.com/engine/install/\."
-exit 1
-fi
-echo "Error\: docker compose is required"
-echo "You can install it from https\://docs\.docker\.com/compose/install/"
-exit 1
-fi
-docker\="docker\-compose up \-d"
-docker\_stop\="docker\-compose stop"
-docker\_clean\="docker\-compose rm \-fsv"
-docker\_remove\_volumes\="docker\-compose down \-v"
-docker\_version\=</span>(docker-compose --version | head -n 1 | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
+  need_wait_for_kibana=true
+  # Check for "docker compose" or "docker-compose"
+  set +e
+  if ! docker compose >/dev/null 2>&1; then
+    if ! available "docker-compose"; then
+      if ! available "docker"; then
+        echo "Error: docker command is required"
+        echo "You can install it from https://docs.docker.com/engine/install/."
+        exit 1
+      fi
+      echo "Error: docker compose is required"
+      echo "You can install it from https://docs.docker.com/compose/install/"
+      exit 1
+    fi
+    docker="docker-compose up -d"
+    docker_stop="docker-compose stop"
+    docker_clean="docker-compose rm -fsv"
+    docker_remove_volumes="docker-compose down -v"
+    docker_version=$(docker-compose --version | head -n 1 | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
     if [ "$(compare_versions "$docker_version" "$min_docker_compose")" = "lt" ]; then
-      echo "Unfortunately we don't support docker compose ${docker_version}. The minimum required version is <span class="math-inline">min\_docker\_compose\."
-echo "You can migrate you docker compose from https\://docs\.docker\.com/compose/migrate/"
-cleanup
-exit 1
-fi
-else
-docker\_stop\="docker compose stop"
-docker\_clean\="docker compose rm \-fsv"
-docker\_remove\_volumes\="docker compose down \-v"
-docker\_version\=</span>(docker compose version | head -n 1 | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
+      echo "Unfortunately we don't support docker compose ${docker_version}. The minimum required version is $min_docker_compose."
+      echo "You can migrate you docker compose from https://docs.docker.com/compose/migrate/"
+      cleanup
+      exit 1
+    fi 
+  else
+    docker_stop="docker compose stop"
+    docker_clean="docker compose rm -fsv"
+    docker_remove_volumes="docker compose down -v"
+    docker_version=$(docker compose version | head -n 1 | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
     # --wait option has been introduced in 2.1.1+
     if [ "$(compare_versions "$docker_version" "2.1.0")" = "gt" ]; then
       docker="docker compose up --wait"
@@ -420,9 +500,9 @@ docker\_version\=</span>(docker compose version | head -n 1 | grep -Eo '[0-9]+\.
 check_installation_folder() {
   # Check if $installation_folder exists
   folder=$installation_folder
-  if [ -d "<span class="math-inline">folder" \]; then
-if \[ \-n "</span>(ls -A "<span class="math-inline">folder"\)" \]; then
-echo "It seems you have already a start\-local installation in '</span>{folder}'."
+  if [ -d "$folder" ]; then
+    if [ -n "$(ls -A "$folder")" ]; then
+      echo "It seems you have already a start-local installation in '${folder}'."
       if [ -f "$folder/uninstall.sh" ]; then
         echo "I cannot proceed unless you uninstall it, using the following command:"
         echo "cd $folder && ./uninstall.sh"
@@ -447,29 +527,32 @@ check_docker_services() {
   check_container_running "$elasticsearch_container_name"
   check_container_running "$kibana_container_name"
   check_container_running "kibana_settings"
-  if [ "$fleet_enabled" = true ]; then
+  if [ -n "${withfleet:-}" ]; then
+    check_container_running "$fleet_agent_container_name"
     check_container_running "$fleet_server_container_name"
   fi
 }
 
 create_installation_folder() {
   # If $folder already exists, it is empty, see above
-  if [ ! -d "$folder" ]; then
+  if [ ! -d "$folder" ]; then 
     mkdir $folder
   fi
   cd $folder
-  folder_to_clean=<span class="math-inline">folder
-\}
-generate\_passwords\(\) \{
-\# Generate random passwords
-es\_password\="</span>(random_password)"
-  if  [ -z "<span class="math-inline">\{esonly\:\-\}" \]; then
-kibana\_password\="</span>(random_password)"
-    kibana_encryption_key="<span class="math-inline">\(random\_password 32\)"
-fi
-\}
-choose\_es\_version\(\) \{
-if \[ \-z "</span>{es_version:-}" ]; then
+  folder_to_clean=$folder
+}
+
+generate_passwords() {
+  # Generate random passwords
+  es_password="$(random_password)"
+  if  [ -z "${esonly:-}" ]; then
+    kibana_password="$(random_password)"
+    kibana_encryption_key="$(random_password 32)"
+  fi
+}
+
+choose_es_version() {
+  if [ -z "${es_version:-}" ]; then
     # Get the latest Elasticsearch version
     es_version="$(get_latest_version)"
   fi
@@ -480,46 +563,51 @@ create_env_file() {
   cat > .env <<- EOM
 ES_LOCAL_VERSION=$es_version
 ES_LOCAL_CONTAINER_NAME=$elasticsearch_container_name
-ES_LOCAL_PASSWORD=<span class="math-inline">es\_password
-ES\_LOCAL\_PORT\=9200
-ES\_LOCAL\_URL\=http\://localhost\:\\$\{ES\_LOCAL\_PORT\}
-ES\_LOCAL\_HEAP\_INIT\=128m
-ES\_LOCAL\_HEAP\_MAX\=2g
-ES\_LOCAL\_DISK\_SPACE\_REQUIRED\=1gb
+ES_LOCAL_PASSWORD=$es_password
+ES_LOCAL_PORT=9200
+ES_LOCAL_URL=http://localhost:\${ES_LOCAL_PORT}
+ES_LOCAL_HEAP_INIT=128m
+ES_LOCAL_HEAP_MAX=2g
+ES_LOCAL_DISK_SPACE_REQUIRED=1gb
 EOM
-if  \[ \-z "</span>{esonly:-}" ]; then
+
+  if  [ -z "${esonly:-}" ]; then
     cat >> .env <<- EOM
 KIBANA_LOCAL_CONTAINER_NAME=$kibana_container_name
 KIBANA_LOCAL_PORT=5601
 KIBANA_LOCAL_PASSWORD=$kibana_password
 KIBANA_ENCRYPTION_KEY=$kibana_encryption_key
 EOM
-  fi
 
-  if [ "$fleet_enabled" = true ]; then
-    cat >> .env <<- EOM
-FLEET_SERVER_CONTAINER_NAME=<span class="math-inline">fleet\_server\_container\_name
-FLEET\_SERVER\_PORT\=8220
+    if [ -n "${withfleet:-}" ]; then
+      cat >> .env <<- EOM
+FLEET_SERVER_CONTAINER_NAME=$fleet_server_container_name
+FLEET_AGENT_CONTAINER_NAME=$fleet_agent_container_name
+FLEET_SERVER_PORT=8220
 EOM
-fi
-\}
-\# Create the start script \(start\.sh\)
-\# including the license update if trial expired
-create\_start\_file\(\) \{
-today\=</span>(date +%s)
-  expire=<span class="math-inline">\(\(today \+ 3600\*24\*30\)\)
-cat \> start\.sh <<\-'EOM'
-\#\!/bin/sh
-\# Start script for start\-local
-\# More information\: https\://github\.com/elastic/start\-local
-set \-eu
-SCRIPT\_DIR\="</span>(cd "$(dirname "<span class="math-inline">0"\)" && pwd\)"
-cd "</span>{SCRIPT_DIR}"
-today=<span class="math-inline">\(date \+%s\)
-\. \./\.env
-\# Check disk space
-available\_gb\=</span>(($(df -k / | awk 'NR==2 {print <span class="math-inline">4\}'\) / 1024 / 1024\)\)
-required\=</span>(echo "${ES_LOCAL_DISK_SPACE_REQUIRED}" | grep -Eo '[0-9]+')
+    fi
+  fi
+}
+
+# Create the start script (start.sh)
+# including the license update if trial expired
+create_start_file() {
+  today=$(date +%s)
+  expire=$((today + 3600*24*30))
+
+  cat > start.sh <<-'EOM'
+#!/bin/sh
+# Start script for start-local
+# More information: https://github.com/elastic/start-local
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "${SCRIPT_DIR}"
+today=$(date +%s)
+. ./.env
+# Check disk space
+available_gb=$(($(df -k / | awk 'NR==2 {print $4}') / 1024 / 1024))
+required=$(echo "${ES_LOCAL_DISK_SPACE_REQUIRED}" | grep -Eo '[0-9]+')
 if [ "$available_gb" -lt "$required" ]; then
   echo "----------------------------------------------------------------------------"
   echo "WARNING: Disk space is below the ${required} GB limit. Elasticsearch will be"
@@ -529,26 +617,28 @@ if [ "$available_gb" -lt "$required" ]; then
   read -r
 fi
 EOM
-  if [ "<span class="math-inline">need\_wait\_for\_kibana" \= true \]; then
-cat \>\> start\.sh <<\-'EOM'
-wait\_for\_kibana\(\) \{
-local timeout\="</span>{1:-60}"
+  if [ "$need_wait_for_kibana" = true ]; then
+    cat >> start.sh <<-'EOM'
+wait_for_kibana() {
+  local timeout="${1:-60}"
   echo "- Waiting for Kibana to be ready"
   echo
-  local start_time="<span class="math-inline">\(date \+%s\)"
-until curl \-s \-I http\://localhost\:5601 \| grep \-q 'HTTP/1\.1 302 Found'; do
-elapsed\_time\="</span>(($(date +%s) - start_time))"
+  local start_time="$(date +%s)"
+  until curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'; do
+    elapsed_time="$(($(date +%s) - start_time))"
     if [ "$elapsed_time" -ge "$timeout" ]; then
-      echo "Error: Kibana timeout of <span class="math-inline">\{timeout\} sec"
-exit 1
-fi
-sleep 2
-done
-\}
+      echo "Error: Kibana timeout of ${timeout} sec"
+      exit 1
+    fi
+    sleep 2
+  done
+}
+
 EOM
-fi
-cat \>\> start\.sh <<\- EOM
-if \[ \-z "\\</span>{ES_LOCAL_LICENSE:-}" ] && [ "\$today" -gt $expire ]; then
+  fi
+
+  cat >> start.sh <<- EOM
+if [ -z "\${ES_LOCAL_LICENSE:-}" ] && [ "\$today" -gt $expire ]; then
   echo "---------------------------------------------------------------------"
   echo "The one-month trial period has expired. You can continue using the"
   echo "Free and open Basic license or request to extend the trial for"
@@ -558,14 +648,14 @@ if \[ \-z "\\</span>{ES_LOCAL_LICENSE:-}" ] && [ "\$today" -gt $expire ]; then
   echo "For more info about the license: https://www.elastic.co/subscriptions"
   echo
   echo "Updating the license..."
-  <span class="math-inline">docker elasticsearch \>/dev/null 2\>&1
-result\=\\$\(curl \-s \-X POST "\\$\{ES\_LOCAL\_URL\}/\_license/start\_basic?acknowledge\=true" \-H "Authorization\: ApiKey \\$\{ES\_LOCAL\_API\_KEY\}" \-o /dev/null \-w '%\{http\_code\}\\n'\)
-if \[ "\\$result" \= "200" \]; then
-echo "✅ Basic license successfully installed"
-echo "ES\_LOCAL\_LICENSE\=basic" \>\> \.env
-else
-echo "Error\: I cannot update the license"
-result\=\\$\(curl \-s \-X GET "\\$\{ES\_LOCAL\_URL\}" \-H "Authorization\: ApiKey \\</span>{ES_LOCAL_API_KEY}" -o /dev/null -w '%{http_code}\n')
+  $docker elasticsearch >/dev/null 2>&1
+  result=\$(curl -s -X POST "\${ES_LOCAL_URL}/_license/start_basic?acknowledge=true" -H "Authorization: ApiKey \${ES_LOCAL_API_KEY}" -o /dev/null -w '%{http_code}\n')
+  if [ "\$result" = "200" ]; then
+    echo "✅ Basic license successfully installed"
+    echo "ES_LOCAL_LICENSE=basic" >> .env
+  else 
+    echo "Error: I cannot update the license"
+    result=\$(curl -s -X GET "\${ES_LOCAL_URL}" -H "Authorization: ApiKey \${ES_LOCAL_API_KEY}" -o /dev/null -w '%{http_code}\n')
     if [ "\$result" != "200" ]; then
       echo "Elasticsearch is not running."
     fi
@@ -576,55 +666,107 @@ fi
 $docker
 EOM
 
-  if [ "<span class="math-inline">need\_wait\_for\_kibana" \= true \]; then
-cat \>\> start\.sh <<\-'EOM'
-wait\_for\_kibana 120
+  if [ "$need_wait_for_kibana" = true ]; then
+    cat >> start.sh <<-'EOM'
+wait_for_kibana 180
 EOM
+  fi
+  
+  # Add Fleet token renewal if Fleet is enabled
+  if [ -n "${withfleet:-}" ]; then
+    cat >> start.sh <<-'EOM'
+
+# If fleet enrollment token exists, check and renew if needed
+if [ -f ".fleet_token" ]; then
+  echo "- Checking Fleet enrollment token"
+  
+  # Login to Kibana
+  cookies=$(curl -s -c - -X POST -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+    -d "{\"username\":\"elastic\",\"password\":\"${ES_LOCAL_PASSWORD}\"}" \
+    http://localhost:5601/api/security/v1/login | grep -o "sid=[^;]*")
+  
+  if [ -z "$cookies" ]; then
+    echo "Warning: Could not check Fleet enrollment token"
+  else
+    # Verify token is still valid
+    token=$(cat .fleet_token)
+    policy_id=$(curl -s -X GET -H "kbn-xsrf: true" -H "Cookie: $cookies" \
+      http://localhost:5601/api/fleet/agent_policies | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    
+    token_valid=$(curl -s -X POST -H "Content-Type: application/json" -H "Authorization: ApiKey $token" \
+      http://localhost:8220/api/fleet/agents/checkin -d "{\"events\":[]}" -o /dev/null -w '%{http_code}\n')
+    
+    if [ "$token_valid" != "200" ]; then
+      echo "- Renewing Fleet enrollment token"
+      # Create new token
+      token_response=$(curl -s -X POST -H "Content-Type: application/json" -H "kbn-xsrf: true" -H "Cookie: $cookies" \
+        -d "{\"policy_id\":\"$policy_id\"}" \
+        http://localhost:5601/api/fleet/enrollment-api-keys)
+      
+      new_token=$(echo "$token_response" | grep -o '"api_key":"[^"]*"' | cut -d'"' -f4)
+      
+      if [ -n "$new_token" ]; then
+        echo "$new_token" > .fleet_token
+        echo "✅ Fleet enrollment token renewed"
+      fi
+    else
+      echo "✅ Fleet enrollment token is valid"
+    fi
+  fi
 fi
-chmod \+x start\.sh
-\}
-\# Create the stop script \(stop\.sh\)
-create\_stop\_file\(\) \{
-cat \> stop\.sh <<\-'EOM'
-\#\!/bin/sh
-\# Stop script for start\-local
-\# More information\: https\://github\.com/elastic/start\-local
-set \-eu
-SCRIPT\_DIR\="</span>(cd "$(dirname "<span class="math-inline">0"\)" && pwd\)"
-cd "</span>{SCRIPT_DIR}"
+EOM
+  fi
+  
+  chmod +x start.sh
+}
+
+# Create the stop script (stop.sh)
+create_stop_file() {
+  cat > stop.sh <<-'EOM'
+#!/bin/sh
+# Stop script for start-local
+# More information: https://github.com/elastic/start-local
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "${SCRIPT_DIR}"
 EOM
 
   cat >> stop.sh <<- EOM
-<span class="math-inline">docker\_stop
+$docker_stop
 EOM
-chmod \+x stop\.sh
-\}
-\# Create the uninstall script \(uninstall\.sh\)
-create\_uninstall\_file\(\) \{
-cat \> uninstall\.sh <<\-'EOM'
-\#\!/bin/sh
-\# Uninstall script for start\-local
-\# More information\: https\://github\.com/elastic/start\-local
-set \-eu
-SCRIPT\_DIR\="</span>(cd "$(dirname "$0")" && pwd)"
+  chmod +x stop.sh
+}
+
+# Create the uninstall script (uninstall.sh)
+create_uninstall_file() {
+
+  cat > uninstall.sh <<-'EOM'
+#!/bin/sh
+# Uninstall script for start-local
+# More information: https://github.com/elastic/start-local
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 ask_confirmation() {
     echo "Do you want to continue? (yes/no)"
     read -r answer
-    case "<span class="math-inline">answer" in
-yes\|y\|Y\|Yes\|YES\)
-return 0  \# true
-;;
-no\|n\|N\|No\|NO\)
-return 1  \# false
-;;
-\*\)
-echo "Please answer yes or no\."
-ask\_confirmation  \# Ask again if the input is invalid
-;;
-esac
-\}
-cd "</span>{SCRIPT_DIR}"
+    case "$answer" in
+        yes|y|Y|Yes|YES)
+            return 0  # true
+            ;;
+        no|n|N|No|NO)
+            return 1  # false
+            ;;
+        *)
+            echo "Please answer yes or no."
+            ask_confirmation  # Ask again if the input is invalid
+            ;;
+    esac
+}
+
+cd "${SCRIPT_DIR}"
 if [ ! -e "docker-compose.yml" ]; then
   echo "Error: I cannot find the docker-compose.yml file"
   echo "I cannot uninstall start-local."
@@ -640,57 +782,61 @@ EOM
 
   cat >> uninstall.sh <<- EOM
   $docker_clean
-  <span class="math-inline">docker\_remove\_volumes
-rm docker\-compose\.yml \.env uninstall\.sh start\.sh stop\.sh
-echo "Start\-local successfully removed"
+  $docker_remove_volumes
+  rm -f docker-compose.yml .env uninstall.sh start.sh stop.sh .fleet_token
+  echo "Start-local successfully removed"
 fi
 EOM
-chmod \+x uninstall\.sh
-\}
-create\_docker\_compose\_file\(\) \{
-\# Create the docker\-compose\-yml file
-cat \> docker\-compose\.yml <<\-'EOM'
-services\:
-elasticsearch\:
-image\: docker\.elastic\.co/elasticsearch/elasticsearch\:</span>{ES_LOCAL_VERSION}
-    container_name: <span class="math-inline">\{ES\_LOCAL\_CONTAINER\_NAME\}
-volumes\:
-\- dev\-elasticsearch\:/usr/share/elasticsearch/data
-ports\:
-\- 127\.0\.0\.1\:</span>{ES_LOCAL_PORT}:9200
+  chmod +x uninstall.sh
+}
+
+create_docker_compose_file() {
+  # Create the docker-compose-yml file
+  cat > docker-compose.yml <<-'EOM'
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ES_LOCAL_VERSION}
+    container_name: ${ES_LOCAL_CONTAINER_NAME}
+    volumes:
+      - dev-elasticsearch:/usr/share/elasticsearch/data
+    ports:
+      - 127.0.0.1:${ES_LOCAL_PORT}:9200
     environment:
       - discovery.type=single-node
-      - ELASTIC_PASSWORD=<span class="math-inline">\{ES\_LOCAL\_PASSWORD\}
-\- xpack\.security\.enabled\=true
-\- xpack\.security\.http\.ssl\.enabled\=false
-\- xpack\.license\.self\_generated\.type\=trial
-\- xpack\.ml\.use\_auto\_machine\_memory\_percent\=true
-\- ES\_JAVA\_OPTS\=\-Xms</span>{ES_LOCAL_HEAP_INIT} -Xmx${ES_LOCAL_HEAP_MAX}
-      - cluster.routing.allocation.disk.watermark.low=<span class="math-inline">\{ES\_LOCAL\_DISK\_SPACE\_REQUIRED\}
-\- cluster\.routing\.allocation\.disk\.watermark\.high\=</span>{ES_LOCAL_DISK_SPACE_REQUIRED}
-      - cluster.routing.allocation.disk.watermark.flood_stage=<span class="math-inline">\{ES\_LOCAL\_DISK\_SPACE\_REQUIRED\}
+      - ELASTIC_PASSWORD=${ES_LOCAL_PASSWORD}
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.license.self_generated.type=trial
+      - xpack.ml.use_auto_machine_memory_percent=true
+      - ES_JAVA_OPTS=-Xms${ES_LOCAL_HEAP_INIT} -Xmx${ES_LOCAL_HEAP_MAX}
+      - cluster.routing.allocation.disk.watermark.low=${ES_LOCAL_DISK_SPACE_REQUIRED}
+      - cluster.routing.allocation.disk.watermark.high=${ES_LOCAL_DISK_SPACE_REQUIRED}
+      - cluster.routing.allocation.disk.watermark.flood_stage=${ES_LOCAL_DISK_SPACE_REQUIRED}
 EOM
-\# Fix for JDK AArch64 issue, see https\://bugs\.openjdk\.org/browse/JDK\-8345296
-if is\_arm64; then
-cat \>\> docker\-compose\.yml <<\-'EOM'
-\- "\_JAVA\_OPTIONS\=\-XX\:UseSVE\=0"
+  
+  # Fix for JDK AArch64 issue, see https://bugs.openjdk.org/browse/JDK-8345296
+  if is_arm64; then
+  cat >> docker-compose.yml <<-'EOM'
+      - "_JAVA_OPTIONS=-XX:UseSVE=0"
 EOM
-fi
-\# Fix for OCI issue on LXC, see https\://github\.com/elastic/start\-local/issues/27
-if \! detect\_lxc; then
-cat \>\> docker\-compose\.yml <<\-'EOM'
-ulimits\:
-memlock\:
-soft\: \-1
-hard\: \-1
+  fi
+
+  # Fix for OCI issue on LXC, see https://github.com/elastic/start-local/issues/27
+  if ! detect_lxc; then
+  cat >> docker-compose.yml <<-'EOM'
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
 EOM
-fi
-cat \>\> docker\-compose\.yml <<\-'EOM'
-healthcheck\:
-test\:
-\[
-"CMD\-SHELL",
-"curl \-\-output /dev/null \-\-silent \-\-head \-\-fail \-u elastic\:</span>{ES_LOCAL_PASSWORD} http://elasticsearch:9200",
+  fi
+
+  cat >> docker-compose.yml <<-'EOM'
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl --output /dev/null --silent --head --fail -u elastic:${ES_LOCAL_PASSWORD} http://elasticsearch:9200",
         ]
       interval: 10s
       timeout: 10s
@@ -698,44 +844,45 @@ test\:
 
 EOM
 
-if  [ -z "<span class="math-inline">\{esonly\:\-\}" \]; then
-cat \>\> docker\-compose\.yml <<\-'EOM'
-kibana\_settings\:
-depends\_on\:
-elasticsearch\:
-condition\: service\_healthy
-image\: docker\.elastic\.co/elasticsearch/elasticsearch\:</span>{ES_LOCAL_VERSION}
+if  [ -z "${esonly:-}" ]; then
+  cat >> docker-compose.yml <<-'EOM'
+  kibana_settings:
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ES_LOCAL_VERSION}
     container_name: kibana_settings
     restart: 'no'
     command: >
       bash -c '
         echo "Setup the kibana_system password";
-        start_time=$<span class="math-inline">\(date \+%s\);
-timeout\=60;
-until curl \-s \-u "elastic\:</span>{ES_LOCAL_PASSWORD}" -X POST http://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\":\"${KIBANA_LOCAL_PASSWORD}\"}" -H "Content-Type: application/json" | grep -q "^{}"; do
-          if [ <span class="math-block">\(\(</span>(date +%s) - $$start_time)) -ge $<span class="math-inline">timeout \]; then
-echo "Error\: Elasticsearch timeout";
-exit 1;
-fi;
-sleep 2;
-done;
-'
-kibana\:
-depends\_on\:
-kibana\_settings\:
-condition\: service\_completed\_successfully
-image\: docker\.elastic\.co/kibana/kibana\:</span>{ES_LOCAL_VERSION}
-    container_name: <span class="math-inline">\{KIBANA\_LOCAL\_CONTAINER\_NAME\}
-volumes\:
-\- dev\-kibana\:/usr/share/kibana/data
-ports\:
-\- 127\.0\.0\.1\:</span>{KIBANA_LOCAL_PORT}:5601
+        start_time=$(date +%s);
+        timeout=60;
+        until curl -s -u "elastic:${ES_LOCAL_PASSWORD}" -X POST http://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\":\"${KIBANA_LOCAL_PASSWORD}\"}" -H "Content-Type: application/json" | grep -q "^{}"; do
+          if [ $(($(date +%s) - $start_time)) -ge $timeout ]; then
+            echo "Error: Elasticsearch timeout";
+            exit 1;
+          fi;
+          sleep 2;
+        done;
+      '
+
+  kibana:
+    depends_on:
+      kibana_settings:
+        condition: service_completed_successfully
+    image: docker.elastic.co/kibana/kibana:${ES_LOCAL_VERSION}
+    container_name: ${KIBANA_LOCAL_CONTAINER_NAME}
+    volumes:
+      - dev-kibana:/usr/share/kibana/data
+    ports:
+      - 127.0.0.1:${KIBANA_LOCAL_PORT}:5601
     environment:
       - SERVER_NAME=kibana
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
       - ELASTICSEARCH_USERNAME=kibana_system
-      - ELASTICSEARCH_PASSWORD=<span class="math-inline">\{KIBANA\_LOCAL\_PASSWORD\}</4\>
-\- XPACK\_ENCRYPTEDSAVEDOBJECTS\_ENCRYPTIONKEY\=</span>{KIBANA_ENCRYPTION_KEY}
+      - ELASTICSEARCH_PASSWORD=${KIBANA_LOCAL_PASSWORD}
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
       - ELASTICSEARCH_PUBLICBASEURL=http://localhost:${ES_LOCAL_PORT}
     healthcheck:
       test:
@@ -748,30 +895,169 @@ ports\:
       retries: 30
 
 EOM
-fi
 
-  if [ "<span class="math-inline">fleet\_enabled" \= true \]; then
-cat \>\> docker\-compose\.yml <<\-'EOM'
-fleet\-server\:
-image\: docker\.elastic\.co/beats/elastic\-agent\:</span>{ES_LOCAL_VERSION}
-    container_name: <span class="math-inline">\{FLEET\_SERVER\_CONTAINER\_NAME\}
-depends\_on\:
-elasticsearch\:
-condition\: service\_healthy
-kibana\:
-condition\: service\_started
-ports\:
-\- 127\.0\.0\.1\:</span>{FLEET_SERVER_PORT}:8220
-    environment:
-      - FLEET_SERVER_MODE=fleet-server
-      - FLEET_SERVER_ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-      - FLEET_SERVER_KIBANA_HOSTS=http://kibana:5601
-      - FLEET_SERVER_ENROLLMENT_TOKEN=<span class="math-inline">\{FLEET\_ENROLLMENT\_TOKEN\}
-\- ELASTIC\_PASSWORD\=</span>{ES_LOCAL_PASSWORD}
+  # Add Fleet Server and Agent if requested
+  if [ -n "${withfleet:-}" ]; then
+  cat >> docker-compose.yml <<-'EOM'
+  fleet_server:
+    depends_on:
+      kibana:
+        condition: service_healthy
+    image: docker.elastic.co/beats/elastic-agent:${ES_LOCAL_VERSION}
+    container_name: ${FLEET_SERVER_CONTAINER_NAME}
+    ports:
+      - 127.0.0.1:${FLEET_SERVER_PORT}:8220
     volumes:
-      - dev-fleet-server:/usr/share/elastic-agent/data
+      - fleet-server-data:/usr/share/elastic-agent
+    user: root
+    environment:
+      - FLEET_SERVER_ENABLE=true
+      - FLEET_SERVER_ELASTICSEARCH_HOST=http://elasticsearch:9200
+      - FLEET_SERVER_ELASTICSEARCH_USERNAME=elastic
+      - FLEET_SERVER_ELASTICSEARCH_PASSWORD=${ES_LOCAL_PASSWORD}
+      - FLEET_SERVER_SERVICE_TOKEN=
+      - FLEET_SERVER_POLICY_ID=fleet-server-policy
+      - FLEET_URL=https://fleet-server:8220
+      - KIBANA_FLEET_SETUP=true
+      - KIBANA_HOST=http://kibana:5601
+      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ES_LOCAL_PASSWORD}
+      - FLEET_SERVER_INSECURE_HTTP=true
+      - FLEET_SERVER_HOST=0.0.0.0
+    command: >
+      bash -c '
+        set -e;
+        sleep 10;
+        until curl -s -f -u "elastic:${ES_LOCAL_PASSWORD}" http://elasticsearch:9200/_cat/indices; do
+          echo "Waiting for Elasticsearch...";
+          sleep 2;
+        done;
+        until curl -s -f http://kibana:5601/api/status; do
+          echo "Waiting for Kibana...";
+          sleep 2;
+        done;
+        echo "Starting Fleet Server...";
+        elastic-agent install --force --insecure \
+          --url=http://kibana:5601 \
+          --enrollment-token=$(curl -s -X POST \
+            -u "elastic:${ES_LOCAL_PASSWORD}" \
+            -H "kbn-xsrf: true" \
+            -H "Content-Type: application/json" \
+            "http://kibana:5601/api/fleet/setup" | grep -o "\\"serviceTokenId\\":\\"[^\\"]*\\"" | cut -d\\"  -f4) \
+          --fleet-server-es=http://elasticsearch:9200 \
+          --fleet-server-service-token= \
+          --fleet-server-policy=fleet-server-policy \
+          --fleet-server-host=0.0.0.0 \
+          --fleet-server-port=8220 \
+          --fleet-server-insecure-http;
+      '
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s http://localhost:8220/api/status | grep -q 'HEALTHY'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  fleet_agent:
+    depends_on:
+      fleet_server:
+        condition: service_healthy
+    image: docker.elastic.co/beats/elastic-agent:${ES_LOCAL_VERSION}
+    container_name: ${FLEET_AGENT_CONTAINER_NAME}
+    volumes:
+      - fleet-agent-data:/usr/share/elastic-agent
+    user: root
+    privileged: true
+    environment:
+      - FLEET_ENROLLMENT_TOKEN=
+      - FLEET_URL=http://fleet-server:8220
+      - FLEET_INSECURE=true
+    command: >
+      bash -c '
+        set -e;
+        sleep 15;
+        echo "Setting up Fleet Agent...";
+        # Create default policy if needed
+        es_resp=$(curl -s -u "elastic:${ES_LOCAL_PASSWORD}" "http://elasticsearch:9200/_cat/indices");
+        echo "ES Indices: $es_resp";
+        
+        # Log in to Kibana for session
+        cookies=$(curl -s -c - -X POST -H "Content-Type: application/json" -H "kbn-xsrf: true" \
+          -d "{\\"username\\":\\"elastic\\",\\"password\\":\\"${ES_LOCAL_PASSWORD}\\"}" \
+          http://kibana:5601/api/security/v1/login | grep -o "sid=[^;]*");
+        
+        if [ -z "$cookies" ]; then
+          echo "Error: Could not authenticate with Kibana";
+          exit 1;
+        fi
+
+        # Check if Fleet is ready
+        fleet_ready=false;
+        retry_count=0;
+        while [ "$fleet_ready" = false ] && [ $retry_count -lt 20 ]; do
+          fleet_status=$(curl -s -X GET -H "kbn-xsrf: true" -H "Cookie: $cookies" \
+            http://kibana:5601/api/fleet/agents/setup);
+          echo "Fleet setup status: $fleet_status";
+          
+          if echo "$fleet_status" | grep -q "\\"isReady\\":true"; then
+            fleet_ready=true;
+          else
+            retry_count=$((retry_count + 1));
+            sleep 5;
+          fi
+        done;
+        
+        if [ "$fleet_ready" = false ]; then
+          echo "Error: Fleet is not ready after multiple attempts";
+          exit 1;
+        fi
+
+        # Get the default policy ID
+        policy_id=$(curl -s -X GET -H "kbn-xsrf: true" -H "Cookie: $cookies" \
+          http://kibana:5601/api/fleet/agent_policies | grep -o "\\"id\\":\\"\\"[^\\"]*\\"" | head -1 | cut -d\\"  -f4);
+        
+        if [ -z "$policy_id" ]; then
+          echo "Error: Could not get default policy ID";
+          exit 1;
+        fi
+        
+        echo "Default policy ID: $policy_id";
+        
+        # Create enrollment token
+        token_response=$(curl -s -X POST -H "Content-Type: application/json" -H "kbn-xsrf: true" -H "Cookie: $cookies" \
+          -d "{\\"policy_id\\":\\"$policy_id\\"}" \
+          http://kibana:5601/api/fleet/enrollment-api-keys);
+        
+        enrollment_token=$(echo "$token_response" | grep -o "\\"api_key\\":\\"\\"[^\\"]*\\"" | cut -d\\"  -f4);
+        
+        if [ -z "$enrollment_token" ]; then
+          echo "Error: Could not create enrollment token";
+          exit 1;
+        fi
+        
+        echo "Token: $enrollment_token";
+        echo "$enrollment_token" > /tmp/fleet_token;
+        
+        # Save token for future use
+        cat /tmp/fleet_token > /usr/share/elastic-agent/fleet_token;
+        
+        # Install the agent
+        elastic-agent install --url=http://fleet-server:8220 \
+          --enrollment-token=$enrollment_token \
+          --insecure \
+          --force;
+          
+        # Keep container running
+        sleep infinity;
+      '
+
 EOM
   fi
+fi
 
   cat >> docker-compose.yml <<-'EOM'
 volumes:
@@ -782,16 +1068,12 @@ if  [ -z "${esonly:-}" ]; then
   cat >> docker-compose.yml <<-'EOM'
   dev-kibana:
 EOM
-fi
 
-  if [ "<span class="math-inline">fleet\_enabled" \= true \]; then
-cat \>\> docker\-compose\.yml <<\-'EOM'
-dev\-fleet\-server\:
+  if [ -n "${withfleet:-}" ]; then
+  cat >> docker-compose.yml <<-'EOM'
+  fleet-server-data:
+  fleet-agent-data:
 EOM
+  fi
 fi
-\}
-print\_steps\(\) \{
-if  \[ \-z "</span>{esonly:-}" ]; then
-    echo "⌛️ Setting up Elasticsearch and Kibana v${es_version}..."
-  else
-    echo "⌛️ Setting up Elasticsearch v${es_
+}
